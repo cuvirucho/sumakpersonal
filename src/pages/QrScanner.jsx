@@ -244,7 +244,7 @@ export default function QrScanner() {
             <div className="turno-acciones">
               <button
                 className="btn-primary btn-empezar"
-                onClick={() => alert("Empezando turno: " + turno.id)}
+                onClick={() => navigate(`/stream/${turno.id}`)}
               >
                 Empezar
               </button>

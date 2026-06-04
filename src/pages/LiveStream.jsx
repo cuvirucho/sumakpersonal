@@ -1,0 +1,383 @@
+import { useEffect, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { db } from "../firebase";
+import {
+  doc,
+  setDoc,
+  addDoc,
+  collection,
+  onSnapshot,
+  deleteDoc,
+  getDocs,
+} from "firebase/firestore";
+
+const newSessionId = () =>
+  `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+const STUN = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ],
+};
+
+export default function LiveStream() {
+  const { turnoId } = useParams();
+  const navigate = useNavigate();
+  const localVideoRef = useRef(null);
+  const pcRef = useRef(null);
+  const streamRef = useRef(null);
+  const timerRef = useRef(null);
+  const unsubsRef = useRef([]);
+  // Listeners propios de la sesión de negociación actual (answer + calleeCandidates)
+  const negotiationUnsubsRef = useRef([]);
+  const sessionRef = useRef(null);
+  const negotiatingRef = useRef(false);
+
+  const [status, setStatus] = useState("idle");
+  const [timer, setTimer] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const viewerUrl = `${window.location.origin}/view/${turnoId}`;
+
+  async function clearCandidates() {
+    try {
+      const callerSnap = await getDocs(
+        collection(db, "streams", turnoId, "callerCandidates"),
+      );
+      const calleeSnap = await getDocs(
+        collection(db, "streams", turnoId, "calleeCandidates"),
+      );
+      await Promise.all(callerSnap.docs.map((d) => deleteDoc(d.ref)));
+      await Promise.all(calleeSnap.docs.map((d) => deleteDoc(d.ref)));
+    } catch (_) {}
+  }
+
+  async function cleanFirestore() {
+    try {
+      await clearCandidates();
+      await deleteDoc(doc(db, "streams", turnoId));
+    } catch (_) {}
+  }
+
+  async function stopStream() {
+    unsubsRef.current.forEach((u) => u());
+    unsubsRef.current = [];
+    negotiationUnsubsRef.current.forEach((u) => u());
+    negotiationUnsubsRef.current = [];
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (streamRef.current)
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    if (pcRef.current) pcRef.current.close();
+    await cleanFirestore();
+    navigate("/home");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // Crea una RTCPeerConnection nueva con un offer fresco y la deja lista para
+    // que el visor responda. Cada reconexión del visor invoca esto de nuevo.
+    async function negotiate() {
+      if (cancelled || negotiatingRef.current || !streamRef.current) return;
+      negotiatingRef.current = true;
+      try {
+        // Cerrar la negociación anterior y limpiar su estado.
+        negotiationUnsubsRef.current.forEach((u) => u());
+        negotiationUnsubsRef.current = [];
+        if (pcRef.current) {
+          pcRef.current.close();
+          pcRef.current = null;
+        }
+        await clearCandidates();
+        if (cancelled) return;
+
+        const session = newSessionId();
+        sessionRef.current = session;
+
+        const pc = new RTCPeerConnection(STUN);
+        pcRef.current = pc;
+        streamRef.current
+          .getTracks()
+          .forEach((t) => pc.addTrack(t, streamRef.current));
+
+        pc.onicecandidate = async (e) => {
+          if (e.candidate) {
+            await addDoc(
+              collection(db, "streams", turnoId, "callerCandidates"),
+              e.candidate.toJSON(),
+            );
+          }
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await setDoc(
+          doc(db, "streams", turnoId),
+          {
+            offer: { type: offer.type, sdp: offer.sdp },
+            session,
+            answer: null,
+          },
+          { merge: true },
+        );
+
+        // Aplicar el answer solo si corresponde a ESTA sesión.
+        const unsubAnswer = onSnapshot(
+          doc(db, "streams", turnoId),
+          async (snap) => {
+            const data = snap.data();
+            if (
+              data?.answer &&
+              data.session === session &&
+              !pc.currentRemoteDescription
+            ) {
+              await pc.setRemoteDescription(
+                new RTCSessionDescription(data.answer),
+              );
+            }
+          },
+        );
+
+        const unsubCandidates = onSnapshot(
+          collection(db, "streams", turnoId, "calleeCandidates"),
+          (snap) => {
+            snap.docChanges().forEach(async (change) => {
+              if (change.type === "added") {
+                try {
+                  await pc.addIceCandidate(
+                    new RTCIceCandidate(change.doc.data()),
+                  );
+                } catch (_) {}
+              }
+            });
+          },
+        );
+
+        negotiationUnsubsRef.current = [unsubAnswer, unsubCandidates];
+      } finally {
+        negotiatingRef.current = false;
+      }
+    }
+
+    async function startStream() {
+      setStatus("connecting");
+      try {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: true,
+        });
+        if (cancelled) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = mediaStream;
+        if (localVideoRef.current)
+          localVideoRef.current.srcObject = mediaStream;
+
+        await negotiate();
+
+        // Renegociar cada vez que un visor (re)entra y pide un offer fresco.
+        let lastViewerWants = null;
+        const unsubViewer = onSnapshot(
+          doc(db, "streams", turnoId),
+          (snap) => {
+            const data = snap.data();
+            if (!data) return;
+            if (
+              data.viewerWants &&
+              data.viewerWants !== lastViewerWants
+            ) {
+              lastViewerWants = data.viewerWants;
+              negotiate();
+            }
+          },
+        );
+
+        unsubsRef.current = [unsubViewer];
+        setStatus("live");
+        timerRef.current = setInterval(() => setTimer((s) => s + 1), 1000);
+      } catch (err) {
+        setStatus("error");
+        setErrorMsg("No se pudo iniciar la transmisión: " + err.message);
+      }
+    }
+
+    startStream();
+
+    return () => {
+      cancelled = true;
+      unsubsRef.current.forEach((u) => u());
+      negotiationUnsubsRef.current.forEach((u) => u());
+      negotiationUnsubsRef.current = [];
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (streamRef.current)
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      if (pcRef.current) pcRef.current.close();
+      cleanFirestore();
+    };
+  }, [turnoId]);
+
+  function formatTimer(s) {
+    const m = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return `${m}:${ss}`;
+  }
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(viewerUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  }
+
+  return (
+    <div className="page">
+      <header className="top-bar">
+        <button className="btn-icon" onClick={stopStream}>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <h2 style={{ margin: 0, fontSize: "1rem" }}>Transmisión en Vivo</h2>
+        <div style={{ width: 36 }} />
+      </header>
+
+      <main className="ls-main">
+        {status === "error" && <div className="error-msg">{errorMsg}</div>}
+
+        <div className="ls-video-wrapper">
+          <video
+            ref={localVideoRef}
+            className="ls-video"
+            autoPlay
+            muted
+            playsInline
+          />
+          {status === "live" && <div className="ls-live-badge">● EN VIVO</div>}
+          {status === "connecting" && (
+            <div className="ls-connecting">Conectando...</div>
+          )}
+        </div>
+
+        {status === "live" && (
+          <div className="ls-timer">{formatTimer(timer)}</div>
+        )}
+
+        <div className="ls-actions">
+          <button className="btn-stop" onClick={stopStream}>
+            Detener Transmisión
+          </button>
+          <button
+            className="btn-copy"
+            onClick={() => alert("Solicitando ayuda para la transmisión")}
+          >
+            Ayuda
+          </button>
+        </div>
+      </main>
+
+      <style>{`
+        .ls-main {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 1rem;
+          gap: 1rem;
+        }
+        .ls-video-wrapper {
+          position: relative;
+          width: 100%;
+          max-width: 480px;
+          background: #000;
+          border-radius: 12px;
+          overflow: hidden;
+          aspect-ratio: 9/16;
+        }
+        .ls-video {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+        .ls-live-badge {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          background: #e74c3c;
+          color: white;
+          font-weight: 700;
+          font-size: 0.8rem;
+          padding: 4px 10px;
+          border-radius: 20px;
+          animation: pulse 1.5s infinite;
+        }
+        .ls-connecting {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          background: rgba(0,0,0,0.6);
+          color: white;
+          font-size: 0.8rem;
+          padding: 4px 10px;
+          border-radius: 20px;
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+        .ls-timer {
+          font-size: 1.5rem;
+          font-weight: 700;
+          color: #e74c3c;
+          letter-spacing: 2px;
+        }
+        .ls-actions {
+          display: flex;
+          gap: 1rem;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+        .btn-copy {
+          background: #3498db;
+          color: white;
+          border: none;
+          padding: 0.75rem 1.5rem;
+          border-radius: 10px;
+          font-size: 1rem;
+          font-weight: 600;
+          cursor: pointer;
+          min-width: 140px;
+        }
+        .btn-copy:hover { background: #2980b9; }
+        .btn-stop {
+          background: #e74c3c;
+          color: white;
+          border: none;
+          padding: 0.75rem 1.5rem;
+          border-radius: 10px;
+          font-size: 1rem;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .btn-stop:hover { background: #c0392b; }
+        .ls-link-text {
+          font-size: 0.75rem;
+          color: #888;
+          word-break: break-all;
+          text-align: center;
+          max-width: 480px;
+        }
+      `}</style>
+    </div>
+  );
+}
