@@ -94,6 +94,7 @@ export default function LiveStream() {
     // Crea una RTCPeerConnection nueva con un offer fresco y la deja lista para
     // que el visor responda. Cada reconexión del visor invoca esto de nuevo.
     async function negotiate() {
+      console.log("NEGOTIATE");
       if (cancelled || negotiatingRef.current || !streamRef.current) return;
       negotiatingRef.current = true;
       try {
@@ -199,22 +200,16 @@ export default function LiveStream() {
         const existingSnap = await getDoc(doc(db, "streams", turnoId));
         if (cancelled) return;
         let lastViewerWants = existingSnap.exists()
-          ? existingSnap.data()?.viewerWants ?? null
+          ? (existingSnap.data()?.viewerWants ?? null)
           : null;
-        const unsubViewer = onSnapshot(
-          doc(db, "streams", turnoId),
-          (snap) => {
-            const data = snap.data();
-            if (!data) return;
-            if (
-              data.viewerWants &&
-              data.viewerWants !== lastViewerWants
-            ) {
-              lastViewerWants = data.viewerWants;
-              negotiate();
-            }
-          },
-        );
+        const unsubViewer = onSnapshot(doc(db, "streams", turnoId), (snap) => {
+          const data = snap.data();
+          if (!data) return;
+          if (data.viewerWants && data.viewerWants !== lastViewerWants) {
+            lastViewerWants = data.viewerWants;
+            negotiate();
+          }
+        });
 
         unsubsRef.current = [unsubViewer];
         setStatus("live");
