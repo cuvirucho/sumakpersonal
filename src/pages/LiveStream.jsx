@@ -63,6 +63,8 @@ async function logStreamDiagnostics(pc, label) {
           framesSent: report.framesSent,
           framesEncoded: report.framesEncoded,
           packetsSent: report.packetsSent,
+          frameWidth: report.frameWidth,
+          frameHeight: report.frameHeight,
         };
       }
     });
@@ -73,14 +75,6 @@ async function logStreamDiagnostics(pc, label) {
 }
 
 export default function LiveStream() {
-  /*verloslogs*/
-  const oldLog = console.log;
-
-  console.log = (...args) => {
-    oldLog(...args);
-    document.getElementById("logs").innerHTML += args.join(" ") + "<br>";
-  };
-
   const { turnoId } = useParams();
   const navigate = useNavigate();
   const localVideoRef = useRef(null);
@@ -100,6 +94,22 @@ export default function LiveStream() {
   const [errorMsg, setErrorMsg] = useState("");
 
   const viewerUrl = `${window.location.origin}/view/${turnoId}`;
+
+  // Espejo de console.log al div #logs (para ver logs en el celular sin
+  // devtools). Se envuelve una sola vez para no anidar el wrapper en cada
+  // render (eso hacía que cada log se repitiera N veces y el div creciera
+  // sin límite).
+  useEffect(() => {
+    if (console.log.__sumakWrapped) return;
+    const oldLog = console.log;
+    const wrapped = (...args) => {
+      oldLog(...args);
+      const el = document.getElementById("logs");
+      if (el) el.innerHTML += args.join(" ") + "<br>";
+    };
+    wrapped.__sumakWrapped = true;
+    console.log = wrapped;
+  }, []);
 
   async function clearCandidates() {
     try {
@@ -184,6 +194,19 @@ export default function LiveStream() {
         streamRef.current
           .getTracks()
           .forEach((t) => pc.addTrack(t, streamRef.current));
+
+        // Diagnóstico: estado real del track de cámara al renegociar. Si el visor
+        // recibe video 2x2 (negro), aquí veremos si la fuente dejó de entregar
+        // frames (muted=true / readyState "ended") o si está viva (entonces el
+        // problema es del encoder/renegociación).
+        const vt = streamRef.current.getVideoTracks()[0];
+        console.log(
+          "CAM TRACK",
+          vt && vt.readyState,
+          "enabled=" + (vt && vt.enabled),
+          "muted=" + (vt && vt.muted),
+          JSON.stringify(vt && vt.getSettings()),
+        );
 
         pc.onicecandidate = async (e) => {
           if (e.candidate) {
