@@ -87,6 +87,11 @@ export default function LiveStream() {
   const sessionRef = useRef(null);
   const negotiatingRef = useRef(false);
   const statsIntervalRef = useRef(null);
+  const lastNegotiateAtRef = useRef(0);
+  // ICE (sobre todo cross-network/TURN) puede tardar varios segundos; no
+  // reiniciar la conexión dentro de esta ventana para evitar el thrash de
+  // renegociación que dejaba el video del visor en 2×2.
+  const NEGOTIATE_MIN_INTERVAL_MS = 15000;
 
   const [status, setStatus] = useState("idle");
   const [timer, setTimer] = useState(0);
@@ -173,7 +178,24 @@ export default function LiveStream() {
     async function negotiate() {
       console.log("NEGOTIATE");
       if (cancelled || negotiatingRef.current || !streamRef.current) return;
+
+      // No destruir una conexión sana o que todavía está estableciéndose: eso
+      // era lo que causaba el bucle de renegociación (el encoder nunca subía de
+      // 2×2 a 480×640 porque cada viewerWants reiniciaba el pc).
+      const cur = pcRef.current;
+      if (cur) {
+        const st = cur.connectionState;
+        if (st === "connected") return;
+        if (
+          (st === "new" || st === "connecting") &&
+          Date.now() - lastNegotiateAtRef.current < NEGOTIATE_MIN_INTERVAL_MS
+        ) {
+          return;
+        }
+      }
+
       negotiatingRef.current = true;
+      lastNegotiateAtRef.current = Date.now();
       try {
         // Cerrar la negociación anterior y limpiar su estado.
         negotiationUnsubsRef.current.forEach((u) => u());
