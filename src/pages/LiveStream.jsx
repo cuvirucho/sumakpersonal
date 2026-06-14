@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase";
 import {
   doc,
+  getDoc,
   setDoc,
   addDoc,
   collection,
@@ -14,12 +15,25 @@ import {
 const newSessionId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-const STUN = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-  ],
-};
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443?transport=tcp",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+];
 
 export default function LiveStream() {
   const { turnoId } = useParams();
@@ -96,7 +110,7 @@ export default function LiveStream() {
         const session = newSessionId();
         sessionRef.current = session;
 
-        const pc = new RTCPeerConnection(STUN);
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         pcRef.current = pc;
         streamRef.current
           .getTracks()
@@ -179,7 +193,14 @@ export default function LiveStream() {
         await negotiate();
 
         // Renegociar cada vez que un visor (re)entra y pide un offer fresco.
-        let lastViewerWants = null;
+        // Se inicializa con el valor actual del doc para que un viewerWants
+        // ya existente (escrito por un visor antes de que arranque el emisor)
+        // no dispare una renegociación espuria justo después de la inicial.
+        const existingSnap = await getDoc(doc(db, "streams", turnoId));
+        if (cancelled) return;
+        let lastViewerWants = existingSnap.exists()
+          ? existingSnap.data()?.viewerWants ?? null
+          : null;
         const unsubViewer = onSnapshot(
           doc(db, "streams", turnoId),
           (snap) => {
