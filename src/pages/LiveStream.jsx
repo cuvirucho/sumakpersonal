@@ -15,25 +15,53 @@ import {
 const newSessionId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-const ICE_SERVERS = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
-  {
-    urls: "turn:openrelay.metered.ca:80",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-];
+// TURN configurable por env. El openrelay gratuito limita el ancho de banda y
+// suele dejar pasar solo el audio (video negro en los visores). Define un TURN
+// confiable con estas variables (varias URLs separadas por comas), p. ej.:
+//   VITE_TURN_URLS="turn:turn.tuproveedor.com:3478,turn:turn.tuproveedor.com:3478?transport=tcp"
+//   VITE_TURN_USERNAME="usuario"
+//   VITE_TURN_CREDENTIAL="clave"
+function buildIceServers() {
+  const servers = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ];
+  const turnUrls = (import.meta.env.VITE_TURN_URLS || "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+  const username = import.meta.env.VITE_TURN_USERNAME;
+  const credential = import.meta.env.VITE_TURN_CREDENTIAL;
+  if (turnUrls.length && username && credential) {
+    servers.push({ urls: turnUrls, username, credential });
+  } else {
+    // Fallback solo para desarrollo: TURN gratuito (no fiable para video en prod).
+    servers.push(
+      {
+        urls: "turn:openrelay.metered.ca:80",
+        username: "openrelayproject",
+        credential: "openrelayproject",
+      },
+      {
+        urls: "turn:openrelay.metered.ca:443",
+        username: "openrelayproject",
+        credential: "openrelayproject",
+      },
+      {
+        urls: "turn:openrelay.metered.ca:443?transport=tcp",
+        username: "openrelayproject",
+        credential: "openrelayproject",
+      },
+    );
+  }
+  return servers;
+}
+
+const ICE_SERVERS = buildIceServers();
+
+// Tope de bitrate de salida del video (bps). Mantenerlo acotado ayuda a que el
+// video atraviese un relay TURN sin saturarse (causa típica de "video negro").
+const MAX_VIDEO_BITRATE = 800_000;
 
 // Diagnóstico temporal: tipo de ruta ICE usada y stats del track de video
 // enviado, para confirmar si "video negro, audio ok" en los visores es por un
@@ -248,6 +276,29 @@ export default function LiveStream() {
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+
+        // Acotar el bitrate del video de salida para que sobreviva a un relay
+        // TURN (evita que se sature y deje el video en negro mientras el audio
+        // sí pasa). Priorizar fps sobre resolución ante poco ancho de banda.
+        try {
+          const videoSender = pc
+            .getSenders()
+            .find((s) => s.track && s.track.kind === "video");
+          if (videoSender) {
+            if (videoSender.track) videoSender.track.contentHint = "motion";
+            const params = videoSender.getParameters();
+            params.degradationPreference = "maintain-framerate";
+            if (!params.encodings || params.encodings.length === 0) {
+              params.encodings = [{}];
+            }
+            params.encodings[0].maxBitrate = MAX_VIDEO_BITRATE;
+            params.encodings[0].maxFramerate = 24;
+            await videoSender.setParameters(params);
+          }
+        } catch (e) {
+          console.log("setParameters error", e && e.message);
+        }
+
         await setDoc(
           doc(db, "streams", turnoId),
           {
@@ -300,7 +351,15 @@ export default function LiveStream() {
       setStatus("connecting");
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
+          // Acotamos la resolución/fps: la cámara del celular puede entregar
+          // resoluciones altas que el encoder no logra mandar por un relay TURN,
+          // dejando el video en negro mientras el audio (bajo bitrate) sí pasa.
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 24, max: 24 },
+          },
           audio: true,
         });
         if (cancelled) {
