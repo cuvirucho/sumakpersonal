@@ -35,7 +35,52 @@ const ICE_SERVERS = [
   },
 ];
 
+// Diagnóstico temporal: tipo de ruta ICE usada y stats del track de video
+// enviado, para confirmar si "video negro, audio ok" en los visores es por un
+// relay TURN con poco ancho de banda u otra causa.
+const STATS_LOG_INTERVAL_MS = 5000;
+const STATS_LOG_MAX_TICKS = 12;
+
+async function logStreamDiagnostics(pc, label) {
+  try {
+    const stats = await pc.getStats();
+    let pair = null;
+    let video = null;
+    stats.forEach((report) => {
+      if (report.type === "candidate-pair" && report.nominated) {
+        const local = stats.get(report.localCandidateId);
+        const remote = stats.get(report.remoteCandidateId);
+        pair = {
+          state: report.state,
+          localType: local && local.candidateType,
+          remoteType: remote && remote.candidateType,
+        };
+      }
+      if (report.type === "outbound-rtp" && report.kind === "video") {
+        video = {
+          dir: "out",
+          bytesSent: report.bytesSent,
+          framesSent: report.framesSent,
+          framesEncoded: report.framesEncoded,
+          packetsSent: report.packetsSent,
+        };
+      }
+    });
+    console.log("[stream-diag]", label, JSON.stringify({ pair, video }));
+  } catch (e) {
+    console.log("[stream-diag]", label, "error", e && e.message);
+  }
+}
+
 export default function LiveStream() {
+  /*verloslogs*/
+  const oldLog = console.log;
+
+  console.log = (...args) => {
+    oldLog(...args);
+    document.getElementById("logs").innerHTML += args.join(" ") + "<br>";
+  };
+
   const { turnoId } = useParams();
   const navigate = useNavigate();
   const localVideoRef = useRef(null);
@@ -47,6 +92,7 @@ export default function LiveStream() {
   const negotiationUnsubsRef = useRef([]);
   const sessionRef = useRef(null);
   const negotiatingRef = useRef(false);
+  const statsIntervalRef = useRef(null);
 
   const [status, setStatus] = useState("idle");
   const [timer, setTimer] = useState(0);
@@ -91,6 +137,27 @@ export default function LiveStream() {
   useEffect(() => {
     let cancelled = false;
 
+    function clearStatsInterval() {
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current);
+        statsIntervalRef.current = null;
+      }
+    }
+
+    // Inicia el log periódico de diagnóstico de stats una vez conectado.
+    function startStatsLogging(pc) {
+      clearStatsInterval();
+      let ticks = 0;
+      statsIntervalRef.current = setInterval(() => {
+        if (cancelled || pcRef.current !== pc) {
+          clearStatsInterval();
+          return;
+        }
+        ticks += 1;
+        logStreamDiagnostics(pc, "emisor");
+        if (ticks >= STATS_LOG_MAX_TICKS) clearStatsInterval();
+      }, STATS_LOG_INTERVAL_MS);
+    }
     // Crea una RTCPeerConnection nueva con un offer fresco y la deja lista para
     // que el visor responda. Cada reconexión del visor invoca esto de nuevo.
     async function negotiate() {
@@ -101,6 +168,7 @@ export default function LiveStream() {
         // Cerrar la negociación anterior y limpiar su estado.
         negotiationUnsubsRef.current.forEach((u) => u());
         negotiationUnsubsRef.current = [];
+        clearStatsInterval();
         if (pcRef.current) {
           pcRef.current.close();
           pcRef.current = null;
@@ -123,6 +191,13 @@ export default function LiveStream() {
               collection(db, "streams", turnoId, "callerCandidates"),
               e.candidate.toJSON(),
             );
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          if (cancelled || pcRef.current !== pc) return;
+          if (pc.connectionState === "connected") {
+            startStatsLogging(pc);
           }
         };
 
@@ -224,6 +299,7 @@ export default function LiveStream() {
 
     return () => {
       cancelled = true;
+      clearStatsInterval();
       unsubsRef.current.forEach((u) => u());
       negotiationUnsubsRef.current.forEach((u) => u());
       negotiationUnsubsRef.current = [];
@@ -267,6 +343,11 @@ export default function LiveStream() {
         <h2 style={{ margin: 0, fontSize: "1rem" }}>Transmisión en Vivo</h2>
         <div style={{ width: 36 }} />
       </header>
+
+      <div
+        style={{ backgroundColor: "#f50000", padding: "1rem" }}
+        id="logs"
+      ></div>
 
       <main className="ls-main">
         {status === "error" && <div className="error-msg">{errorMsg}</div>}
