@@ -140,13 +140,17 @@ export default function LiveStream() {
     console.log = wrapped;
   }, []);
 
+  // Borra los candidatos de la sesión actual (limpieza al detener). Cada sesión
+  // tiene su propia subcolección, así que esto no afecta conexiones en curso.
   async function clearCandidates() {
+    const session = sessionRef.current;
+    if (!session) return;
     try {
       const callerSnap = await getDocs(
-        collection(db, "streams", turnoId, "callerCandidates"),
+        collection(db, "streams", turnoId, "sessions", session, "callerCandidates"),
       );
       const calleeSnap = await getDocs(
-        collection(db, "streams", turnoId, "calleeCandidates"),
+        collection(db, "streams", turnoId, "sessions", session, "calleeCandidates"),
       );
       await Promise.all(callerSnap.docs.map((d) => deleteDoc(d.ref)));
       await Promise.all(calleeSnap.docs.map((d) => deleteDoc(d.ref)));
@@ -228,7 +232,10 @@ export default function LiveStream() {
           pcRef.current.close();
           pcRef.current = null;
         }
-        await clearCandidates();
+        // Nota: NO se borran candidatos aquí. Cada sesión usa su propia
+        // subcolección (streams/{turnoId}/sessions/{session}/...), así que
+        // renegociar nunca pisa los candidatos ICE de la conexión en curso
+        // (eso era lo que rompía el ICE y causaba el bucle de negro/2×2).
         if (cancelled) return;
 
         const session = newSessionId();
@@ -256,14 +263,26 @@ export default function LiveStream() {
         pc.onicecandidate = async (e) => {
           if (e.candidate) {
             await addDoc(
-              collection(db, "streams", turnoId, "callerCandidates"),
+              collection(
+                db,
+                "streams",
+                turnoId,
+                "sessions",
+                session,
+                "callerCandidates",
+              ),
               e.candidate.toJSON(),
             );
           }
         };
 
+        pc.oniceconnectionstatechange = () => {
+          console.log("EMI ICE", pc.iceConnectionState);
+        };
+
         pc.onconnectionstatechange = () => {
           if (cancelled || pcRef.current !== pc) return;
+          console.log("EMI CONN", pc.connectionState);
           if (pc.connectionState === "connected") {
             startStatsLogging(pc);
           }
@@ -323,7 +342,14 @@ export default function LiveStream() {
         );
 
         const unsubCandidates = onSnapshot(
-          collection(db, "streams", turnoId, "calleeCandidates"),
+          collection(
+            db,
+            "streams",
+            turnoId,
+            "sessions",
+            session,
+            "calleeCandidates",
+          ),
           (snap) => {
             snap.docChanges().forEach(async (change) => {
               if (change.type === "added") {
