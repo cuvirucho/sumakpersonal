@@ -59,6 +59,11 @@ function buildIceServers() {
 
 const ICE_SERVERS = buildIceServers();
 
+// Forzar relay (solo TURN) para validar el servidor TURN una vez configurado:
+// poner VITE_FORCE_RELAY="true" en .env. En "all" (por defecto) prueba host/srflx/relay.
+const ICE_TRANSPORT_POLICY =
+  import.meta.env.VITE_FORCE_RELAY === "true" ? "relay" : "all";
+
 // Tope de bitrate de salida del video (bps). Generoso a propósito: en LAN el
 // ancho de banda no es el límite, y un tope bajo + "maintain-framerate" hacía
 // que el encoder sacrificara RESOLUCIÓN hasta 2×2 (video negro en el visor).
@@ -241,7 +246,10 @@ export default function LiveStream() {
         const session = newSessionId();
         sessionRef.current = session;
 
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        const pc = new RTCPeerConnection({
+          iceServers: ICE_SERVERS,
+          iceTransportPolicy: ICE_TRANSPORT_POLICY,
+        });
         pcRef.current = pc;
         streamRef.current
           .getTracks()
@@ -262,6 +270,11 @@ export default function LiveStream() {
 
         pc.onicecandidate = async (e) => {
           if (e.candidate) {
+            // Diagnóstico: tipo de candidato (host = LAN directo, srflx = STUN,
+            // relay = TURN). Si nunca aparece "relay", no hay TURN que funcione;
+            // si solo hay "host" y la conexión falla, la red bloquea P2P directo.
+            const typ = (e.candidate.candidate.match(/ typ (\S+)/) || [])[1];
+            console.log("EMI CAND", typ);
             await addDoc(
               collection(
                 db,
@@ -273,6 +286,8 @@ export default function LiveStream() {
               ),
               e.candidate.toJSON(),
             );
+          } else {
+            console.log("EMI CAND fin");
           }
         };
 
