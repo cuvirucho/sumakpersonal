@@ -59,9 +59,10 @@ function buildIceServers() {
 
 const ICE_SERVERS = buildIceServers();
 
-// Tope de bitrate de salida del video (bps). Mantenerlo acotado ayuda a que el
-// video atraviese un relay TURN sin saturarse (causa típica de "video negro").
-const MAX_VIDEO_BITRATE = 800_000;
+// Tope de bitrate de salida del video (bps). Generoso a propósito: en LAN el
+// ancho de banda no es el límite, y un tope bajo + "maintain-framerate" hacía
+// que el encoder sacrificara RESOLUCIÓN hasta 2×2 (video negro en el visor).
+const MAX_VIDEO_BITRATE = 2_500_000;
 
 // Diagnóstico temporal: tipo de ruta ICE usada y stats del track de video
 // enviado, para confirmar si "video negro, audio ok" en los visores es por un
@@ -115,11 +116,6 @@ export default function LiveStream() {
   const sessionRef = useRef(null);
   const negotiatingRef = useRef(false);
   const statsIntervalRef = useRef(null);
-  const lastNegotiateAtRef = useRef(0);
-  // ICE (sobre todo cross-network/TURN) puede tardar varios segundos; no
-  // reiniciar la conexión dentro de esta ventana para evitar el thrash de
-  // renegociación que dejaba el video del visor en 2×2.
-  const NEGOTIATE_MIN_INTERVAL_MS = 15000;
 
   const [status, setStatus] = useState("idle");
   const [timer, setTimer] = useState(0);
@@ -207,23 +203,22 @@ export default function LiveStream() {
       console.log("NEGOTIATE");
       if (cancelled || negotiatingRef.current || !streamRef.current) return;
 
-      // No destruir una conexión sana o que todavía está estableciéndose: eso
-      // era lo que causaba el bucle de renegociación (el encoder nunca subía de
-      // 2×2 a 480×640 porque cada viewerWants reiniciaba el pc).
+      // No destruir un PeerConnection vivo o que todavía se está estableciendo:
+      // reiniciarlo en cada viewerWants era lo que impedía que el encoder subiera
+      // de 2×2 a 640×480 (video negro). Solo se reconstruye si no hay PC o si el
+      // actual ya murió (failed/closed/disconnected); los estados new/connecting/
+      // connected se dejan en paz para que el encoder se estabilice.
       const cur = pcRef.current;
-      if (cur) {
-        const st = cur.connectionState;
-        if (st === "connected") return;
-        if (
-          (st === "new" || st === "connecting") &&
-          Date.now() - lastNegotiateAtRef.current < NEGOTIATE_MIN_INTERVAL_MS
-        ) {
-          return;
-        }
+      if (
+        cur &&
+        (cur.connectionState === "new" ||
+          cur.connectionState === "connecting" ||
+          cur.connectionState === "connected")
+      ) {
+        return;
       }
 
       negotiatingRef.current = true;
-      lastNegotiateAtRef.current = Date.now();
       try {
         // Cerrar la negociación anterior y limpiar su estado.
         negotiationUnsubsRef.current.forEach((u) => u());
@@ -277,9 +272,10 @@ export default function LiveStream() {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        // Acotar el bitrate del video de salida para que sobreviva a un relay
-        // TURN (evita que se sature y deje el video en negro mientras el audio
-        // sí pasa). Priorizar fps sobre resolución ante poco ancho de banda.
+        // Encoder de video: NUNCA colapsar la resolución. Con "maintain-framerate"
+        // + tope bajo, ante presión de CPU/BWE el encoder bajaba el tamaño hasta
+        // 2×2 (negro). Con "maintain-resolution" + scaleResolutionDownBy=1 se
+        // mantiene el tamaño real (640×480) y, si hace falta, baja FPS.
         try {
           const videoSender = pc
             .getSenders()
@@ -287,12 +283,12 @@ export default function LiveStream() {
           if (videoSender) {
             if (videoSender.track) videoSender.track.contentHint = "motion";
             const params = videoSender.getParameters();
-            params.degradationPreference = "maintain-framerate";
+            params.degradationPreference = "maintain-resolution";
             if (!params.encodings || params.encodings.length === 0) {
               params.encodings = [{}];
             }
             params.encodings[0].maxBitrate = MAX_VIDEO_BITRATE;
-            params.encodings[0].maxFramerate = 24;
+            params.encodings[0].scaleResolutionDownBy = 1;
             await videoSender.setParameters(params);
           }
         } catch (e) {
