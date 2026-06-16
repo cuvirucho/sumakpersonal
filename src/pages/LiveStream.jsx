@@ -207,25 +207,20 @@ export default function LiveStream() {
       }, STATS_LOG_INTERVAL_MS);
     }
     // Crea una RTCPeerConnection nueva con un offer fresco y la deja lista para
-    // que el visor responda. Cada reconexión del visor invoca esto de nuevo.
-    async function negotiate() {
+    // que el visor responda. Cada reconexión del visor invoca esto de nuevo,
+    // pasando el `wants` (viewerWants) que se está atendiendo: ese sello viaja en
+    // el doc como `servingWants` para que el visor solo responda el offer hecho
+    // para SU petición (y nunca uno viejo de otra sesión).
+    async function negotiate(wants) {
       console.log("NEGOTIATE");
       if (cancelled || negotiatingRef.current || !streamRef.current) return;
 
-      // No destruir un PeerConnection vivo o que todavía se está estableciendo:
-      // reiniciarlo en cada viewerWants era lo que impedía que el encoder subiera
-      // de 2×2 a 640×480 (video negro). Solo se reconstruye si no hay PC o si el
-      // actual ya murió (failed/closed/disconnected); los estados new/connecting/
-      // connected se dejan en paz para que el encoder se estabilice.
-      const cur = pcRef.current;
-      if (
-        cur &&
-        (cur.connectionState === "new" ||
-          cur.connectionState === "connecting" ||
-          cur.connectionState === "connected")
-      ) {
-        return;
-      }
+      // Antes había un guard que evitaba reconstruir un PC en new/connecting/
+      // connected. Se quitó: bloqueaba la renegociación cuando un visor se re-
+      // conectaba (re-escaneo) mientras el PC del visor anterior aún no moría,
+      // dejando al visor nuevo sin un offer correlacionado con su petición. Ya no
+      // hace falta: `viewerWants` solo cambia al montar el visor o tras un fallo
+      // con backoff (no hay bucle rápido) y `lastViewerWants` deduplica.
 
       negotiatingRef.current = true;
       try {
@@ -335,6 +330,9 @@ export default function LiveStream() {
             offer: { type: offer.type, sdp: offer.sdp },
             session,
             answer: null,
+            // Sello: qué petición del visor atiende este offer. El visor solo
+            // responde si coincide con su propio viewerWants.
+            servingWants: wants ?? null,
           },
           { merge: true },
         );
@@ -407,23 +405,26 @@ export default function LiveStream() {
         if (localVideoRef.current)
           localVideoRef.current.srcObject = mediaStream;
 
-        await negotiate();
-
-        // Renegociar cada vez que un visor (re)entra y pide un offer fresco.
-        // Se inicializa con el valor actual del doc para que un viewerWants
-        // ya existente (escrito por un visor antes de que arranque el emisor)
-        // no dispare una renegociación espuria justo después de la inicial.
+        // Leer primero el doc para conocer si ya hay un visor esperando
+        // (viewerWants) y atender ESA petición en el offer inicial. Esto también
+        // crea el doc para que un visor que llegue después pueda escribir su
+        // viewerWants.
         const existingSnap = await getDoc(doc(db, "streams", turnoId));
         if (cancelled) return;
         let lastViewerWants = existingSnap.exists()
           ? (existingSnap.data()?.viewerWants ?? null)
           : null;
+
+        await negotiate(lastViewerWants);
+
+        // Renegociar cada vez que un visor (re)entra y pide un offer fresco,
+        // sellando el offer con su viewerWants.
         const unsubViewer = onSnapshot(doc(db, "streams", turnoId), (snap) => {
           const data = snap.data();
           if (!data) return;
           if (data.viewerWants && data.viewerWants !== lastViewerWants) {
             lastViewerWants = data.viewerWants;
-            negotiate();
+            negotiate(data.viewerWants);
           }
         });
 
