@@ -5,6 +5,8 @@ import Home from './pages/Home';
 import QrScanner from './pages/QrScanner';
 import Perfil from './pages/Perfil';
 import LiveStream from './pages/LiveStream';
+import Cronometro from './pages/Cronometro';
+import DetallesFinales from './pages/DetallesFinales';
 
 export default function App() {
   return (
@@ -16,6 +18,8 @@ export default function App() {
           <Route path="/scanner" element={<QrScanner />} />
           <Route path="/perfil" element={<Perfil />} />
           <Route path="/stream/:turnoId" element={<LiveStream />} />
+          <Route path="/cronometro/:turnoId" element={<Cronometro />} />
+          <Route path="/detalles/:turnoId" element={<DetallesFinales />} />
         </Route>
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>

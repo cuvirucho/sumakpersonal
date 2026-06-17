@@ -1,32 +1,77 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 
-const mockData = {
-  saldoGanado: 1250.75,
-  corteActual: {
-    periodo: 'Mayo 2026',
-    ventas: 42,
-    comision: 8.5,
-    total: 1250.75,
-    detalle: [
-      { fecha: '28 May', monto: 320.0 },
-      { fecha: '25 May', monto: 480.5 },
-      { fecha: '20 May', monto: 450.25 },
-    ],
-  },
+// Campos conocidos con etiqueta "bonita". Solo se muestran los que existan en el documento.
+const CAMPOS_CURADOS = {
+  nombre: 'Nombre',
+  nombres: 'Nombres',
+  apellido: 'Apellido',
+  apellidos: 'Apellidos',
+  telefono: 'Teléfono',
+  celular: 'Celular',
+  rol: 'Rol',
+  cargo: 'Cargo',
+  cedula: 'Cédula',
+  dni: 'DNI',
+  identificacion: 'Identificación',
+  direccion: 'Dirección',
+  ciudad: 'Ciudad',
+  pais: 'País',
 };
+
+// Claves que no se muestran en la sección genérica "Más datos".
+const CLAVES_OCULTAS = new Set(['id', 'uid', 'email', 'correo', 'photoURL', 'foto', 'puntaje']);
+
+function formatearValor(valor) {
+  if (valor === null || valor === undefined) return '';
+  if (typeof valor === 'boolean') return valor ? 'Sí' : 'No';
+  if (typeof valor === 'object') {
+    // Timestamp de Firestore
+    if (typeof valor.toDate === 'function') return valor.toDate().toLocaleString('es-MX');
+    return '';
+  }
+  return String(valor);
+}
 
 export default function Perfil() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [showCorte, setShowCorte] = useState(false);
+  const { user, profile, loading } = useAuth();
 
-  const nombre = user?.displayName || user?.email?.split('@')[0] || 'Usuario';
-  const email = user?.email || '';
-  const foto = user?.photoURL;
+  const nombre =
+    profile?.nombre ||
+    profile?.nombres ||
+    user?.displayName ||
+    user?.email?.split('@')[0] ||
+    'Usuario';
+  const email = profile?.email || profile?.correo || user?.email || '';
+  const foto = profile?.photoURL || profile?.foto || user?.photoURL;
+
+  // Medidor de satisfacción: puntaje sobre 100 → 5 estrellas con relleno parcial.
+  const puntajeRaw = Number(profile?.puntaje);
+  const tienePuntaje = Number.isFinite(puntajeRaw);
+  const puntaje = tienePuntaje ? Math.min(100, Math.max(0, puntajeRaw)) : null;
+  const estrellas = puntaje !== null ? (puntaje / 100) * 5 : 0; // 0–5
+
+  // Campos curados presentes en el documento.
+  const curados = profile
+    ? Object.entries(CAMPOS_CURADOS)
+        .filter(([clave]) => formatearValor(profile[clave]) !== '')
+        .map(([clave, etiqueta]) => ({ etiqueta, valor: formatearValor(profile[clave]) }))
+    : [];
+
+  // Resto de campos no curados ni ocultos.
+  const masDatos = profile
+    ? Object.entries(profile)
+        .filter(
+          ([clave, valor]) =>
+            !CAMPOS_CURADOS[clave] &&
+            !CLAVES_OCULTAS.has(clave) &&
+            formatearValor(valor) !== ''
+        )
+        .map(([clave, valor]) => ({ clave, valor: formatearValor(valor) }))
+    : [];
 
   async function handleLogout() {
     await signOut(auth);
@@ -46,8 +91,6 @@ export default function Perfil() {
       </header>
 
       <main className="perfil-main">
-        <div className="mock-badge">Datos de prueba — pendiente conexión a BD</div>
-
         <div className="perfil-header">
           {foto ? (
             <img src={foto} alt="foto" className="perfil-avatar" />
@@ -60,51 +103,54 @@ export default function Perfil() {
           <p className="perfil-email">{email}</p>
         </div>
 
-        <div className="saldo-card">
-          <p className="saldo-label">Saldo Ganado</p>
-          <p className="saldo-monto">
-            ${mockData.saldoGanado.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-          </p>
-          <p className="saldo-periodo">Período: {mockData.corteActual.periodo}</p>
-        </div>
-
-        <button className="btn-primary corte-btn" onClick={() => setShowCorte(true)}>
-          Ver Corte
-        </button>
-
-        {showCorte && (
-          <div className="modal-overlay" onClick={() => setShowCorte(false)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
-              <h3>Corte — {mockData.corteActual.periodo}</h3>
-              <div className="corte-info">
-                <div className="corte-row">
-                  <span>Ventas realizadas</span>
-                  <strong>{mockData.corteActual.ventas}</strong>
-                </div>
-                <div className="corte-row">
-                  <span>Comisión</span>
-                  <strong>{mockData.corteActual.comision}%</strong>
-                </div>
-                <div className="corte-divider" />
-                <div className="corte-row total">
-                  <span>Total a cobrar</span>
-                  <strong>
-                    ${mockData.corteActual.total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                  </strong>
+        {loading ? (
+          <div className="spinner-container">
+            <div className="spinner" />
+          </div>
+        ) : !profile ? (
+          <div className="mock-badge">No se encontró información del usuario</div>
+        ) : (
+          <>
+            {tienePuntaje && (
+              <div className="satisfaccion-card">
+                <p className="satisfaccion-label">Satisfacción</p>
+                <div className="estrellas" aria-label={`${puntaje} de 100`}>
+                  {[0, 1, 2, 3, 4].map((i) => {
+                    const fill = Math.min(1, Math.max(0, estrellas - i)) * 100;
+                    return (
+                      <span className="estrella" key={i}>
+                        <span className="estrella-base">★</span>
+                        <span className="estrella-fill" style={{ width: `${fill}%` }}>★</span>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
-              <h4 style={{ marginTop: '1rem' }}>Detalle</h4>
-              {mockData.corteActual.detalle.map((d, i) => (
-                <div key={i} className="corte-row">
-                  <span>{d.fecha}</span>
-                  <span>${d.monto.toFixed(2)}</span>
-                </div>
-              ))}
-              <button className="btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => setShowCorte(false)}>
-                Cerrar
-              </button>
-            </div>
-          </div>
+            )}
+
+            {curados.length > 0 && (
+              <div className="perfil-datos">
+                {curados.map(({ etiqueta, valor }) => (
+                  <div className="dato-row" key={etiqueta}>
+                    <span className="dato-label">{etiqueta}</span>
+                    <span className="dato-valor">{valor}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {masDatos.length > 0 && (
+              <div className="perfil-datos">
+                <p className="perfil-datos-titulo">Más datos</p>
+                {masDatos.map(({ clave, valor }) => (
+                  <div className="dato-row" key={clave}>
+                    <span className="dato-label">{clave}</span>
+                    <span className="dato-valor">{valor}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         <button className="btn-outline logout-btn" onClick={handleLogout}>

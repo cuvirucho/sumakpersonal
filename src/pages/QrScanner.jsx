@@ -132,17 +132,27 @@ export default function QrScanner() {
         <div className="cotizacion-detalle">
           {servicios.map((s, i) => (
             <div key={i} className="cotizacion-servicio">
-              <div><strong>{s.titulo}</strong></div>
-              {s.tipoLimpieza && <div className="cot-sub">Tipo: {s.tipoLimpieza}</div>}
+              <div>
+                <strong>{s.titulo}</strong>
+              </div>
+              {s.tipoLimpieza && (
+                <div className="cot-sub">Tipo: {s.tipoLimpieza}</div>
+              )}
               {s.tamaño && <div className="cot-sub">Tamaño: {s.tamaño}</div>}
             </div>
           ))}
           {adicionales.length > 0 && (
             <div className="cotizacion-adicionales">
               <span className="cot-sub-label">Adicionales:</span>
-              {adicionales.map((a, i) => (
-                <div key={i} className="cot-sub">{typeof a === "object" ? (a.titulo || JSON.stringify(a)) : a}</div>
-              ))}
+              {adicionales.map((a, i) => {
+                const nombre =
+                  typeof a === "object" ? a.name || a.titulo || "Adicional" : a;
+                return (
+                  <div key={i} className="cot-sub">
+                    • {nombre}
+                  </div>
+                );
+              })}
             </div>
           )}
           {adicionales.length === 0 && (
@@ -162,8 +172,8 @@ export default function QrScanner() {
       typeof valor === "object" && valor.toDate
         ? valor.toDate().toLocaleString("es-ES")
         : typeof valor === "object"
-        ? JSON.stringify(valor)
-        : String(valor);
+          ? JSON.stringify(valor)
+          : String(valor);
     return (
       <div className="turno-campo" key={label}>
         <span className="turno-label">{label}</span>
@@ -171,6 +181,8 @@ export default function QrScanner() {
       </div>
     );
   }
+
+  console.log(turno);
 
   return (
     <div className="page">
@@ -236,6 +248,12 @@ export default function QrScanner() {
                     k !== "estado" &&
                     k !== "fechaCreacion" &&
                     k !== "deviceId" &&
+                    k !== "pago" &&
+                    k !== "ubicacion" &&
+                    k !== "uid" &&
+                    k !== "correo" &&
+                    k !== "celular" &&
+                    k !== "celular" &&
                     k !== "creadoEn",
                 )
                 .map(([k, v]) => renderCampo(k, v))}
@@ -246,7 +264,13 @@ export default function QrScanner() {
                 className="btn-primary btn-empezar"
                 onClick={() => navigate(`/stream/${turno.id}`)}
               >
-                Empezar
+                Empezar en live
+              </button>
+              <button
+                className="btn-primary btn-empezar"
+                onClick={() => navigate(`/cronometro/${turno.id}`)}
+              >
+                Empezar sin live
               </button>
               <button
                 className="btn-secondary btn-ayuda"
@@ -257,14 +281,6 @@ export default function QrScanner() {
                 Ayuda
               </button>
             </div>
-
-            <button
-              className="btn-outline"
-              style={{ marginTop: "1rem" }}
-              onClick={() => navigate("/home")}
-            >
-              Volver al inicio
-            </button>
           </div>
         )}
       </main>

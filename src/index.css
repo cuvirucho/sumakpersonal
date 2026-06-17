@@ -418,74 +418,81 @@ body {
   color: var(--gray-500);
 }
 
-.saldo-card {
-  background: var(--green);
-  color: var(--white);
-  border-radius: 16px;
-  padding: 1.5rem;
-  text-align: center;
+.perfil-datos {
+  background: var(--white);
+  border: 1px solid var(--gray-200, #e5e7eb);
+  border-radius: 12px;
+  padding: 0.5rem 1rem;
 }
-.saldo-label {
-  font-size: 0.875rem;
-  opacity: 0.85;
+.perfil-datos-titulo {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gray-500);
+  padding: 0.6rem 0 0.2rem;
 }
-.saldo-monto {
-  font-size: 2.25rem;
-  font-weight: 800;
-  margin: 0.25rem 0;
+.dato-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--gray-200, #f0f0f0);
 }
-.saldo-periodo {
+.dato-row:last-child {
+  border-bottom: none;
+}
+.dato-label {
   font-size: 0.8rem;
-  opacity: 0.75;
+  color: var(--gray-500);
+  text-transform: capitalize;
+}
+.dato-valor {
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-word;
 }
 
-.corte-btn {
-  margin-top: 0.25rem;
-}
 .logout-btn {
   margin-top: auto;
 }
 
-/* ─── Modal ─── */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  z-index: 100;
-  padding: 1rem;
-}
-.modal {
+/* ─── Medidor de satisfacción ─── */
+.satisfaccion-card {
   background: var(--white);
-  border-radius: 20px 20px 16px 16px;
-  padding: 1.5rem;
-  width: 100%;
-  max-width: 480px;
-  max-height: 85dvh;
-  overflow-y: auto;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  text-align: center;
 }
-.modal h3 {
-  font-size: 1.1rem;
-  margin-bottom: 1rem;
+.satisfaccion-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gray-500);
+  margin-bottom: 0.25rem;
 }
-.corte-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+.estrellas {
+  display: inline-flex;
+  gap: 0.15rem;
 }
-.corte-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.95rem;
-  padding: 0.25rem 0;
+.estrella {
+  position: relative;
+  display: inline-block;
+  font-size: 1.5rem;
+  line-height: 1;
 }
-.corte-row.total {
-  font-size: 1.05rem;
-  color: var(--green);
+.estrella-base {
+  color: var(--gray-200, #e5e7eb);
 }
-.corte-divider {
-  height: 1px;
-  background: var(--gray-200);
+.estrella-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: #f5b301;
 }

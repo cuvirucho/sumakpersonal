@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase";
+import AdicionalesChecklist from "../components/AdicionalesChecklist";
 import {
   doc,
   getDoc,
@@ -126,6 +127,8 @@ export default function LiveStream() {
   const [timer, setTimer] = useState(0);
   const [copied, setCopied] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [adicionalesCompletos, setAdicionalesCompletos] = useState(true);
+  const [aviso, setAviso] = useState("");
 
   const viewerUrl = `${window.location.origin}/view/${turnoId}`;
 
@@ -152,10 +155,24 @@ export default function LiveStream() {
     if (!session) return;
     try {
       const callerSnap = await getDocs(
-        collection(db, "streams", turnoId, "sessions", session, "callerCandidates"),
+        collection(
+          db,
+          "streams",
+          turnoId,
+          "sessions",
+          session,
+          "callerCandidates",
+        ),
       );
       const calleeSnap = await getDocs(
-        collection(db, "streams", turnoId, "sessions", session, "calleeCandidates"),
+        collection(
+          db,
+          "streams",
+          turnoId,
+          "sessions",
+          session,
+          "calleeCandidates",
+        ),
       );
       await Promise.all(callerSnap.docs.map((d) => deleteDoc(d.ref)));
       await Promise.all(calleeSnap.docs.map((d) => deleteDoc(d.ref)));
@@ -169,7 +186,9 @@ export default function LiveStream() {
     } catch (_) {}
   }
 
-  async function stopStream() {
+  // Limpieza compartida: corta listeners, timer, tracks, peer connection y
+  // borra los datos de Firestore. No navega (eso lo deciden quien la llame).
+  async function teardownStream() {
     unsubsRef.current.forEach((u) => u());
     unsubsRef.current = [];
     negotiationUnsubsRef.current.forEach((u) => u());
@@ -179,7 +198,24 @@ export default function LiveStream() {
       streamRef.current.getTracks().forEach((t) => t.stop());
     if (pcRef.current) pcRef.current.close();
     await cleanFirestore();
+  }
+
+  // Cancelar (flecha de regresar): termina y vuelve al inicio.
+  async function stopStream() {
+    await teardownStream();
     navigate("/home");
+  }
+
+  // Finalizar (botón "Detener Transmisión"): captura la duración antes de
+  // limpiar y va a la página de detalles finales para cerrar el turno.
+  async function finishStream() {
+    if (!adicionalesCompletos) {
+      setAviso("Falta completar los adicionales");
+      return;
+    }
+    const duracion = timer;
+    await teardownStream();
+    navigate(`/detalles/${turnoId}`, { state: { duracion } });
   }
 
   useEffect(() => {
@@ -513,7 +549,7 @@ export default function LiveStream() {
         )}
 
         <div className="ls-actions">
-          <button className="btn-stop" onClick={stopStream}>
+          <button className="btn-stop" onClick={finishStream}>
             Detener Transmisión
           </button>
           <button
@@ -523,6 +559,16 @@ export default function LiveStream() {
             Ayuda
           </button>
         </div>
+
+        {aviso && <div className="error-msg">{aviso}</div>}
+
+        <AdicionalesChecklist
+          turnoId={turnoId}
+          onStatusChange={(completos) => {
+            setAdicionalesCompletos(completos);
+            if (completos) setAviso("");
+          }}
+        />
       </main>
 
       <style>{`
