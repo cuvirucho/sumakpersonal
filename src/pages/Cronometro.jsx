@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AdicionalesChecklist from "../components/AdicionalesChecklist";
+import { useSession } from "../hooks/useSession";
+import { useBlockExit } from "../hooks/useBlockExit";
 
 function formatTimer(s) {
   const m = String(Math.floor(s / 60)).padStart(2, "0");
@@ -11,17 +13,27 @@ function formatTimer(s) {
 export default function Cronometro() {
   const { turnoId } = useParams();
   const navigate = useNavigate();
+  const { session, updateSession } = useSession();
   const timerRef = useRef(null);
   const [timer, setTimer] = useState(0);
   const [adicionalesCompletos, setAdicionalesCompletos] = useState(true);
   const [aviso, setAviso] = useState("");
 
-  // El cronómetro arranca apenas se entra a la pantalla.
+  // Mientras el cronómetro corre no se puede salir de la pantalla.
+  useBlockExit(true);
+
+  // El cronómetro arranca apenas se entra a la pantalla y cuenta el tiempo real
+  // transcurrido desde `startedAt`, de modo que sobreviva a recargas.
   useEffect(() => {
-    timerRef.current = setInterval(() => setTimer((s) => s + 1), 1000);
+    const startedAt = session?.startedAt ?? Date.now();
+    updateSession({ phase: "timer", startedAt });
+    const tick = () => setTimer(Math.floor((Date.now() - startedAt) / 1000));
+    tick();
+    timerRef.current = setInterval(tick, 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Terminar: captura la duración y va a detalles finales para cerrar el turno.
@@ -32,6 +44,7 @@ export default function Cronometro() {
     }
     const duracion = timer;
     if (timerRef.current) clearInterval(timerRef.current);
+    updateSession({ phase: "detalles", duracion });
     navigate(`/detalles/${turnoId}`, { state: { duracion } });
   }
 

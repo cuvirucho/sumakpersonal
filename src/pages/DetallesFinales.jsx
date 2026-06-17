@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../hooks/useAuth";
+import { useSession } from "../hooks/useSession";
 
 function formatTimer(s) {
   const m = String(Math.floor(s / 60)).padStart(2, "0");
@@ -15,8 +16,10 @@ export default function DetallesFinales() {
   const { state } = useLocation();
   const navigate = useNavigate();
   const { user, profile } = useAuth();
+  const { session, clearSession } = useSession();
 
-  const duracion = state?.duracion ?? 0;
+  // Duración desde la navegación o, si se recargó la página, desde la sesión.
+  const duracion = state?.duracion ?? session?.duracion ?? 0;
 
   const [claveFin, setClaveFin] = useState("");
   const [detalles, setDetalles] = useState("");
@@ -76,6 +79,9 @@ export default function DetallesFinales() {
           fechaFin: serverTimestamp(),
         },
       });
+      // Turno finalizado: se limpia la sesión para que desaparezca la tarjeta
+      // de Home y el estado persistido.
+      clearSession();
       setDone(true);
     } catch (err) {
       setError("No se pudo finalizar: " + err.message);

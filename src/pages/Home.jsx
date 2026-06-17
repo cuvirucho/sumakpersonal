@@ -2,11 +2,23 @@ import { useNavigate } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
+import { useSession } from '../hooks/useSession';
+
+const PHASE_INFO = {
+  scanned: { label: 'Turno escaneado', accion: 'Volver al turno', ruta: () => `/scanner` },
+  live: { label: 'Transmisión en vivo activa', accion: 'Volver al live', ruta: (id) => `/stream/${id}` },
+  timer: { label: 'Cronómetro en curso', accion: 'Volver al cronómetro', ruta: (id) => `/cronometro/${id}` },
+  detalles: { label: 'Turno por finalizar', accion: 'Finalizar turno', ruta: (id) => `/detalles/${id}` },
+};
 
 export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { session } = useSession();
   const firstName = user?.displayName?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuario';
+
+  const servicios = session?.turno?.cotizacion?.servicios ?? [];
+  const info = session ? PHASE_INFO[session.phase] : null;
 
   async function handleLogout() {
     await signOut(auth);
@@ -31,6 +43,26 @@ export default function Home() {
           <h1>Hola, {firstName} 👋</h1>
           <p>¿Qué vas a hacer hoy?</p>
         </div>
+
+        {session && info && (
+          <div className="turno-proceso-card">
+            <span className="tp-badge">● {info.label}</span>
+            <div className="tp-id">Turno: {session.turnoId}</div>
+            {servicios.length > 0 && (
+              <ul className="tp-servicios">
+                {servicios.map((s, i) => (
+                  <li key={i}>{s.titulo}</li>
+                ))}
+              </ul>
+            )}
+            <button
+              className="tp-volver"
+              onClick={() => navigate(info.ruta(session.turnoId))}
+            >
+              {info.accion}
+            </button>
+          </div>
+        )}
 
         <div className="home-actions">
           <button className="action-card primary" onClick={() => navigate('/scanner')}>
@@ -61,6 +93,50 @@ export default function Home() {
           </button>
         </div>
       </main>
+
+      <style>{`
+        .turno-proceso-card {
+          background: #fff;
+          border: 2px solid #2ecc71;
+          border-radius: 14px;
+          padding: 1rem 1.25rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.6rem;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        }
+        .tp-badge {
+          font-weight: 700;
+          color: #27ae60;
+          font-size: 0.9rem;
+        }
+        .tp-id {
+          font-size: 0.82rem;
+          color: #777;
+          word-break: break-all;
+        }
+        .tp-servicios {
+          margin: 0;
+          padding-left: 1.1rem;
+          color: #333;
+          font-size: 0.9rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+        .tp-volver {
+          margin-top: 0.3rem;
+          background: #2ecc71;
+          color: white;
+          border: none;
+          padding: 0.7rem 1rem;
+          border-radius: 10px;
+          font-size: 1rem;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .tp-volver:hover { background: #27ae60; }
+      `}</style>
     </div>
   );
 }

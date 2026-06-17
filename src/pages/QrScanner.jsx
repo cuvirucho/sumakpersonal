@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 import jsQR from "jsqr";
 import { db } from "../firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { useSession } from "../hooks/useSession";
 
 export default function QrScanner() {
   const navigate = useNavigate();
+  const { session, startSession } = useSession();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [scanning, setScanning] = useState(false);
@@ -14,6 +16,13 @@ export default function QrScanner() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Si volvemos desde Home con un turno ya escaneado, reconstruimos la
+    // pantalla de resultado (botones live/sin-live) sin reabrir la cámara.
+    if (session?.phase === "scanned" && session.turno) {
+      setTurno(session.turno);
+      return;
+    }
+
     let active = true;
     let animId = null;
     let stream = null;
@@ -115,7 +124,11 @@ export default function QrScanner() {
 
       await updateDoc(ref, { estado: "proceso" });
 
-      setTurno({ id: turnoId, ...snap.data(), estado: "proceso" });
+      const turnoData = { id: turnoId, ...snap.data(), estado: "proceso" };
+      setTurno(turnoData);
+      // Persistimos el turno en proceso para mostrar la tarjeta en Home y poder
+      // volver a esta pantalla con el botón "Volver".
+      startSession({ turnoId, turno: turnoData, phase: "scanned" });
     } catch (err) {
       setError("Error al buscar el turno: " + err.message);
     } finally {
@@ -181,8 +194,6 @@ export default function QrScanner() {
       </div>
     );
   }
-
-  console.log(turno);
 
   return (
     <div className="page">

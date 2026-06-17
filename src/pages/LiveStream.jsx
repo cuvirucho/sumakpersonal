@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase";
 import AdicionalesChecklist from "../components/AdicionalesChecklist";
+import { useSession } from "../hooks/useSession";
+import { useBlockExit } from "../hooks/useBlockExit";
 import {
   doc,
   getDoc,
@@ -112,6 +114,7 @@ async function logStreamDiagnostics(pc, label) {
 export default function LiveStream() {
   const { turnoId } = useParams();
   const navigate = useNavigate();
+  const { session: turnoSession, updateSession } = useSession();
   const localVideoRef = useRef(null);
   const pcRef = useRef(null);
   const streamRef = useRef(null);
@@ -131,6 +134,10 @@ export default function LiveStream() {
   const [aviso, setAviso] = useState("");
 
   const viewerUrl = `${window.location.origin}/view/${turnoId}`;
+
+  // Mientras la transmisión está activa no se puede salir de la pantalla:
+  // la única salida es "Detener Transmisión".
+  useBlockExit(true);
 
   // Espejo de console.log al div #logs (para ver logs en el celular sin
   // devtools). Se envuelve una sola vez para no anidar el wrapper en cada
@@ -200,14 +207,9 @@ export default function LiveStream() {
     await cleanFirestore();
   }
 
-  // Cancelar (flecha de regresar): termina y vuelve al inicio.
-  async function stopStream() {
-    await teardownStream();
-    navigate("/home");
-  }
-
   // Finalizar (botón "Detener Transmisión"): captura la duración antes de
-  // limpiar y va a la página de detalles finales para cerrar el turno.
+  // limpiar y va a la página de detalles finales para cerrar el turno. Es la
+  // única salida permitida mientras la transmisión está activa.
   async function finishStream() {
     if (!adicionalesCompletos) {
       setAviso("Falta completar los adicionales");
@@ -215,6 +217,7 @@ export default function LiveStream() {
     }
     const duracion = timer;
     await teardownStream();
+    updateSession({ phase: "detalles", duracion });
     navigate(`/detalles/${turnoId}`, { state: { duracion } });
   }
 
@@ -466,7 +469,14 @@ export default function LiveStream() {
 
         unsubsRef.current = [unsubViewer];
         setStatus("live");
-        timerRef.current = setInterval(() => setTimer((s) => s + 1), 1000);
+        // El timer cuenta el tiempo real transcurrido desde `startedAt`, para
+        // que sobreviva a recargas (la sesión persiste el timestamp de inicio).
+        const startedAt = turnoSession?.startedAt ?? Date.now();
+        updateSession({ phase: "live", startedAt });
+        const tick = () =>
+          setTimer(Math.floor((Date.now() - startedAt) / 1000));
+        tick();
+        timerRef.current = setInterval(tick, 1000);
       } catch (err) {
         setStatus("error");
         setErrorMsg("No se pudo iniciar la transmisión: " + err.message);
@@ -506,18 +516,7 @@ export default function LiveStream() {
   return (
     <div className="page">
       <header className="top-bar">
-        <button className="btn-icon" onClick={stopStream}>
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
+        <div style={{ width: 36 }} />
         <h2 style={{ margin: 0, fontSize: "1rem" }}>Transmisión en Vivo</h2>
         <div style={{ width: 36 }} />
       </header>
