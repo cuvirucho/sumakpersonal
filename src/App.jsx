@@ -7,6 +7,7 @@ import Perfil from './pages/Perfil';
 import LiveStream from './pages/LiveStream';
 import Cronometro from './pages/Cronometro';
 import DetallesFinales from './pages/DetallesFinales';
+import MisCitas from './pages/MisCitas';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/scanner" element={<QrScanner />} />
           <Route path="/perfil" element={<Perfil />} />
+          <Route path="/citas" element={<MisCitas />} />
           <Route path="/stream/:turnoId" element={<LiveStream />} />
           <Route path="/cronometro/:turnoId" element={<Cronometro />} />
           <Route path="/detalles/:turnoId" element={<DetallesFinales />} />
